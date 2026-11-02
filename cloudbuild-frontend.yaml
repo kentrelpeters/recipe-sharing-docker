@@ -1,0 +1,46 @@
+# Set _BACKEND_URL in the frontend trigger to the backend Cloud Run origin.
+substitutions:
+  _BACKEND_URL: ''
+steps:
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: 'bash'
+    env:
+      - 'BACKEND_URL=${_BACKEND_URL}'
+    args:
+      - '-ceu'
+      - |
+        if [[ ! "$$BACKEND_URL" =~ ^https://[a-zA-Z0-9.-]+\.run\.app$ ]]; then
+          echo "Set _BACKEND_URL to the backend https://...run.app URL without /api/recipes or a trailing slash."
+          exit 1
+        fi
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - build
+      - '--build-arg'
+      - 'VITE_API_URL=${_BACKEND_URL}'
+      - '-t'
+      - 'us-central1-docker.pkg.dev/$PROJECT_ID/recipe-images/recipe-frontend:$BUILD_ID'
+      - './frontend'
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', 'us-central1-docker.pkg.dev/$PROJECT_ID/recipe-images/recipe-frontend:$BUILD_ID']
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: 'gcloud'
+    args:
+      - run
+      - deploy
+      - recipe-frontend
+      - '--image=us-central1-docker.pkg.dev/$PROJECT_ID/recipe-images/recipe-frontend:$BUILD_ID'
+      - '--project=$PROJECT_ID'
+      - '--region=us-central1'
+      - '--platform=managed'
+      - '--allow-unauthenticated'
+      - '--port=80'
+      - '--min-instances=0'
+      - '--max-instances=1'
+      - '--memory=256Mi'
+      - '--cpu=1'
+      - '--quiet'
+images:
+  - 'us-central1-docker.pkg.dev/$PROJECT_ID/recipe-images/recipe-frontend:$BUILD_ID'
+options:
+  logging: CLOUD_LOGGING_ONLY
