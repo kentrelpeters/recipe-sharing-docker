@@ -1,0 +1,19 @@
+CI CD Analysis
+Kentrel Peters
+
+Automated testing improves reliability because the same checks run whenever I push a change. Manual testing can help me explore the website, but I could forget an endpoint or overlook an error. In this project, the backend tests check recipe creation, retrieval, deletion, validation, and health status. The frontend tests include checking that the actual app displays recipes and submits its form. Running these checks before building images makes the process more consistent. Passing tests do not prove that every feature is perfect, so I would still use manual testing for appearance and usability.
+
+The intentional failure showed me how the pipeline protects the application. I changed the health test to expect HTTP 503 even though the endpoint correctly returned HTTP 200. GitHub Actions reported the exact mismatch and skipped the Docker build and deployment jobs. This helped me find the problem before any deployment step could run. After restoring the correct expectation, all 19 tests passed and both Docker images built successfully. This evidence confirms the test gate works. Deployment was intentionally skipped on the feature branch; GCP authentication and access still need verification before I can claim a successful automatic production deployment.
+
+GitHub Actions fits this project because the code, workflow, and results are available together in GitHub. Hosted runners reduce the server setup I need to manage, and workflows can respond to pushes and pull requests. Its limitations include usage limits and dependence on GitHub and external actions. Jenkins offers more control over build infrastructure and many plugins for different tools. However, someone must manage its installation, updates, plugins, and build agents. I would choose GitHub Actions for a small GitHub project like mine. I would consider Jenkins for an organization that needs customized infrastructure or integration with existing internal systems.
+
+For a larger team, the same approach could check each pull request before merging. Required reviews and status checks could prevent changes from entering the deployment branch until checks pass. Separate test databases would keep developers from affecting each other's data. Teams could also split tests into parallel jobs, cache dependencies, and use staging before production. These changes would help developers receive feedback sooner while keeping deployment decisions consistent.
+
+Sources
+https://docs.github.com/en/actions/how-tos/write-workflows/choose-what-workflows-do/use-jobs
+https://www.jenkins.io/doc/book/managing/
+https://www.jenkins.io/doc/book/managing/plugins/
+
+Observed runs
+Intentional failure: https://github.com/kentrelpeters/recipe-sharing-docker/actions/runs/42530674540
+Successful tests and Docker builds: https://github.com/kentrelpeters/recipe-sharing-docker/actions/runs/42530781253

@@ -1,0 +1,103 @@
+name: Recipe Sharing CI CD
+
+on:
+  push:
+    branches: [main, cloud-run-deployment, unit10-cicd]
+  pull_request:
+    branches: [main, cloud-run-deployment]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: recipe-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  test:
+    name: Backend and frontend tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: |
+            backend/package-lock.json
+            frontend/package-lock.json
+      - name: Install backend dependencies
+        run: npm ci --prefix backend
+      - name: Install frontend dependencies
+        run: npm ci --prefix frontend
+      - name: Test backend API
+        run: npm test --prefix backend -- --runInBand
+      - name: Test frontend components and utilities
+        run: npm test --prefix frontend
+      - name: Build frontend assets
+        run: npm run build --prefix frontend
+
+  build:
+    name: Build both Docker images
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build backend image
+        run: docker build -t recipe-backend:${{ github.sha }} ./backend
+      - name: Build frontend image
+        run: >-
+          docker build
+          --build-arg VITE_API_URL=https://recipe-backend-140340177725.us-central1.run.app
+          -t recipe-frontend:${{ github.sha }} ./frontend
+
+  deploy:
+    name: Deploy tested application to Cloud Run
+    needs: [test, build]
+    # Feature branches and pull requests validate code without changing production.
+    if: >-
+      github.event_name != 'pull_request' &&
+      (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/cloud-run-deployment')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID || 'recipe-sharing-513502' }}
+      GCP_REGION: ${{ secrets.GCP_REGION || 'us-central1' }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check deployment authentication is configured
+        env:
+          GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+        run: |
+          if [ -z "$GCP_SA_KEY" ]; then
+            echo 'Add the GCP_SA_KEY repository secret before deploying.'
+            exit 1
+          fi
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ env.GCP_PROJECT_ID }}
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+      - uses: google-github-actions/setup-gcloud@v3
+        with:
+          project_id: ${{ env.GCP_PROJECT_ID }}
+      - name: Build push and deploy backend with Cloud Build
+        run: gcloud builds submit . --project="$GCP_PROJECT_ID" --region="$GCP_REGION" --config=cloudbuild-backend.yaml --quiet
+      - name: Read deployed backend URL
+        run: |
+          BACKEND_URL=$(gcloud run services describe recipe-backend --project="$GCP_PROJECT_ID" --region="$GCP_REGION" --format='value(status.url)')
+          echo "BACKEND_URL=$BACKEND_URL" >> "$GITHUB_ENV"
+      - name: Build push and deploy frontend with Cloud Build
+        run: >-
+          gcloud builds submit . --project="$GCP_PROJECT_ID" --region="$GCP_REGION"
+          --config=cloudbuild-frontend.yaml --substitutions="_BACKEND_URL=$BACKEND_URL" --quiet
+      - name: Check deployed services
+        run: |
+          FRONTEND_URL=$(gcloud run services describe recipe-frontend --project="$GCP_PROJECT_ID" --region="$GCP_REGION" --format='value(status.url)')
+          curl --fail --retry 3 "$BACKEND_URL/api/health"
+          curl --fail --retry 3 "$FRONTEND_URL"
+          echo "Backend: $BACKEND_URL" >> "$GITHUB_STEP_SUMMARY"
+          echo "Frontend: $FRONTEND_URL" >> "$GITHUB_STEP_SUMMARY"
